@@ -128,6 +128,159 @@ describe("Extension: HomeAssistant", () => {
         expect(duplicated).toStrictEqual([]);
     });
 
+    it("Should mark thermostat configuration toggles as config entities", () => {
+        const switchExposes = [
+            new zhc.Switch().withLabel("Auto lock").withState("auto_lock", false, "Enable/disable auto lock", zhc.access.STATE_SET, "AUTO", "MANUAL"),
+            new zhc.Switch().withLabel("Away mode").withState("away_mode", false, "Enable/disable away mode", zhc.access.STATE_SET),
+            new zhc.Switch().withLabel("Valve detection").withState("valve_detection", true, "Valve detection", zhc.access.STATE_SET),
+            new zhc.Switch()
+                .withLabel("Window detection")
+                .withState("window_detection", true, "Enables/disables window detection", zhc.access.STATE_SET),
+        ];
+        const binaryExposes = [
+            new zhc.Binary("frost_protection", zhc.access.STATE_SET, "ON", "OFF").withDescription("Anti-freeze protection"),
+            new zhc.Binary("heating_stop", zhc.access.STATE_SET, "ON", "OFF").withDescription("Heating stop"),
+            new zhc.Binary("away_mode", zhc.access.STATE_SET, "ON", "OFF").withDescription("Away mode"),
+            new zhc.Binary("window_detection", zhc.access.STATE_SET, "ON", "OFF").withDescription("Open window detection"),
+        ];
+        const getDiscoveryConfigs = (expose: zhc.Expose): KeyValueAny[] => {
+            const device = {
+                definition: {},
+                isDevice: (): boolean => true,
+                isGroup: (): boolean => false,
+                endpoint: () => undefined,
+                options: {},
+                exposes: (): zhc.Expose[] => [expose],
+                zh: {endpoints: []},
+            };
+            // @ts-expect-error private method and minimal test device
+            return extension.getConfigs(device);
+        };
+
+        for (const expose of switchExposes) {
+            const [config] = getDiscoveryConfigs(expose);
+            expect(config.type).toStrictEqual("switch");
+            expect(config.object_id).toStrictEqual(expose.features[0].property);
+            expect(config.discovery_payload.entity_category).toStrictEqual("config");
+            expect(config.discovery_payload.command_topic_postfix).toStrictEqual(expose.features[0].property);
+        }
+
+        for (const expose of binaryExposes) {
+            const [config] = getDiscoveryConfigs(expose);
+            expect(config.type).toStrictEqual("switch");
+            expect(config.object_id).toStrictEqual(`switch_${expose.name}`);
+            expect(config.discovery_payload.entity_category).toStrictEqual("config");
+            expect(config.discovery_payload.command_topic_postfix).toStrictEqual(expose.property);
+        }
+    });
+
+    it("Should mark device settings as config entities", () => {
+        const getDiscoveryConfigs = (expose: zhc.Expose): KeyValueAny[] => {
+            const device = {
+                definition: {},
+                isDevice: (): boolean => true,
+                isGroup: (): boolean => false,
+                endpoint: () => undefined,
+                options: {},
+                exposes: (): zhc.Expose[] => [expose],
+                zh: {endpoints: []},
+            };
+            // @ts-expect-error private method and minimal test device
+            return extension.getConfigs(device);
+        };
+
+        const enumExposes = [
+            new zhc.Enum("set_limits", zhc.access.STATE_SET, ["START", "END", "RESET"]),
+            new zhc.Enum("motor_direction", zhc.access.STATE_SET, ["forward", "back"]),
+            new zhc.Enum("temperature_unit", zhc.access.STATE_SET, ["celsius", "fahrenheit"]),
+        ];
+
+        for (const expose of enumExposes) {
+            const [config] = getDiscoveryConfigs(expose);
+            expect(config.type).toStrictEqual("select");
+            expect(config.object_id).toStrictEqual(expose.property);
+            expect(config.discovery_payload.entity_category).toStrictEqual("config");
+        }
+
+        const binaryExposes = [
+            new zhc.Binary("tilt_mode", zhc.access.STATE_SET, "ON", "OFF"),
+            new zhc.Binary("calibration_left", zhc.access.STATE_SET, "ON", "OFF"),
+            new zhc.Binary("motor_reversal_right", zhc.access.STATE_SET, "ON", "OFF"),
+            new zhc.Binary("enable_display", zhc.access.STATE_SET, "ON", "OFF"),
+            new zhc.Binary("indicator", zhc.access.STATE_SET, "ON", "OFF"),
+        ];
+
+        for (const expose of binaryExposes) {
+            const [config] = getDiscoveryConfigs(expose);
+            expect(config.type).toStrictEqual("switch");
+            expect(config.object_id).toStrictEqual(`switch_${expose.property}`);
+            expect(config.discovery_payload.entity_category).toStrictEqual("config");
+        }
+
+        const numericExposes = [
+            new zhc.Numeric("calibration_time_left", zhc.access.STATE_SET),
+            new zhc.Numeric("comfort_temperature_min", zhc.access.STATE_SET),
+            new zhc.Numeric("comfort_humidity_max", zhc.access.STATE_SET),
+            new zhc.Numeric("measurement_interval", zhc.access.STATE_SET),
+            new zhc.Numeric("minimum_range", zhc.access.STATE_SET),
+            new zhc.Numeric("maximum_range", zhc.access.STATE_SET),
+            new zhc.Numeric("detection_delay", zhc.access.STATE_SET),
+            new zhc.Numeric("fading_time", zhc.access.STATE_SET),
+            new zhc.Numeric("large_motion_detection_sensitivity", zhc.access.STATE_SET),
+            new zhc.Numeric("medium_motion_detection_distance", zhc.access.STATE_SET),
+            new zhc.Numeric("small_detection_sensitivity", zhc.access.STATE_SET),
+            new zhc.Numeric("soil_calibration", zhc.access.STATE_SET),
+            new zhc.Numeric("soil_sampling", zhc.access.STATE_SET),
+            new zhc.Numeric("soil_warning", zhc.access.STATE_SET),
+        ];
+
+        for (const expose of numericExposes) {
+            const [config] = getDiscoveryConfigs(expose);
+            expect(config.type).toStrictEqual("number");
+            expect(config.object_id).toStrictEqual(expose.property);
+            expect(config.discovery_payload.entity_category).toStrictEqual("config");
+        }
+
+        const [textConfig] = getDiscoveryConfigs(new zhc.Text("schedule_settings", zhc.access.STATE_SET));
+        expect(textConfig.type).toStrictEqual("text");
+        expect(textConfig.object_id).toStrictEqual("schedule_settings");
+        expect(textConfig.discovery_payload.entity_category).toStrictEqual("config");
+    });
+
+    it("Should apply expose-level Home Assistant discovery metadata", () => {
+        const createDevice = (exposes: zhc.Expose[]): Device =>
+            ({
+                definition: {},
+                isDevice: (): boolean => true,
+                isGroup: (): boolean => false,
+                endpoint: () => undefined,
+                options: {},
+                exposes: (): zhc.Expose[] => exposes,
+                zh: {endpoints: []},
+            }) as Device;
+
+        const voltageExpose = new zhc.Numeric("voltage", zhc.access.STATE).withUnit("V");
+        Object.assign(voltageExpose, {
+            homeassistant: {
+                type: "valve",
+                entityCategory: "diagnostic",
+                deviceClass: "voltage",
+                enabledByDefault: false,
+                icon: "mdi:flash",
+            },
+        });
+
+        // @ts-expect-error private
+        const configs = extension.getConfigs(createDevice([voltageExpose]));
+        expect(configs.find((config) => config.object_id === "voltage")?.discovery_payload).toMatchObject({
+            device_class: "voltage",
+            enabled_by_default: false,
+            entity_category: "diagnostic",
+            icon: "mdi:flash",
+        });
+        expect(configs.find((config) => config.object_id === "voltage")?.discovery_payload).not.toHaveProperty("type");
+    });
+
     it("Should discover devices and groups", async () => {
         settings.set(["homeassistant", "experimental_event_entities"], true);
         settings.set(["groups", "9", "homeassistant"], {name: "HA Discovery Group", icon: "mdi:lightbulb-group"});
@@ -1196,6 +1349,24 @@ describe("Extension: HomeAssistant", () => {
         });
     });
 
+    it("Should apply user configuration after converter compatibility mapping", async () => {
+        settings.set(["devices", "0x18fc2600000d7ae2", "homeassistant", "climate"], {
+            modes: ["off", "heat", "auto"],
+            mode_command_template: null,
+        });
+
+        await resetExtension();
+        await flushPromises();
+
+        const call = mockMQTTPublishAsync.mock.calls.find((c) => c[0] === "homeassistant/climate/0x18fc2600000d7ae2/climate/config");
+        expect(call).toBeDefined();
+        const payload = JSON.parse(call![1] as string);
+
+        expect(payload.modes).toStrictEqual(["off", "heat", "auto"]);
+        expect(payload.mode_command_template).toBeUndefined();
+        expect(payload.mode_command_topic).toStrictEqual("zigbee2mqtt/bosch_radiator/set");
+    });
+
     it("does not throw when discovery payload override throws", async () => {
         const bosch = getZ2MEntity(devices["RBSH-TRV0-ZB-EU"]) as Device;
         assert(typeof bosch.definition?.meta?.overrideHaDiscoveryPayload === "function");
@@ -1252,6 +1423,30 @@ describe("Extension: HomeAssistant", () => {
         overrideSpy.mockRestore();
     });
 
+    it("passes device options to discovery payload overrides", async () => {
+        const bosch = getZ2MEntity(devices["RBSH-TRV0-ZB-EU"]) as Device;
+        assert(typeof bosch.definition?.meta?.overrideHaDiscoveryPayload === "function");
+        const overrideSpy = vi.spyOn(bosch.definition.meta, "overrideHaDiscoveryPayload") as MockInstance;
+        settings.set(["devices", "0x18fc2600000d7ae2", "discovery_option_marker"], "passed");
+
+        overrideSpy.mockImplementation((payload, options) => {
+            if (payload.mode_command_topic?.endsWith("/system_mode")) {
+                payload.discovery_option_marker = options?.discovery_option_marker;
+            }
+        });
+
+        await resetExtension();
+
+        expect(overrideSpy).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({discovery_option_marker: "passed"}));
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
+            "homeassistant/climate/0x18fc2600000d7ae2/climate/config",
+            expect.stringContaining('"discovery_option_marker":"passed"'),
+            {qos: 1, retain: true},
+        );
+
+        overrideSpy.mockRestore();
+    });
+
     it("Should discover Bosch BTH-RM230Z with a current_humidity attribute", () => {
         const payload = {
             action_template:
@@ -1275,11 +1470,11 @@ describe("Extension: HomeAssistant", () => {
             min_temp: "5",
             mode_command_topic: "zigbee2mqtt/bosch_rm230z/set",
             mode_state_template:
-                "{% set values = {'schedule':'auto','manual':'heat','pause':'off'} %}{% set value = value_json.operating_mode %}{% if value == \"manual\" %}{{ value_json.system_mode }}{% else %}{{ values[value] if value in values.keys() else 'off' }}{% endif %}",
+                "{% set active_modes = ['heat'] %}{% set fallback_mode = 'heat' %}{% set values = {'schedule':'auto','pause':'off'} %}{% set value = value_json.operating_mode %}{% set mode = value_json.system_mode %}{% if value == 'manual' %}{{ mode if mode in active_modes else fallback_mode }}{% else %}{{ values[value] if value in values.keys() else 'off' }}{% endif %}",
             mode_command_template:
-                "{% set values = { 'auto':'schedule','heat':'manual','cool':'manual','off':'pause'} %}{% if value == \"heat\" or value == \"cool\" %}{\"operating_mode\": \"manual\", \"system_mode\": \"{{ value }}\"}{% else %}{\"operating_mode\": \"{{ values[value] if value in values.keys() else 'pause' }}\"}{% endif %}",
+                "{% set active_modes = ['heat'] %}{% set values = {'auto':'schedule','off':'pause'} %}{% if value in active_modes %}{\"operating_mode\": \"manual\", \"system_mode\": \"{{ value }}\"}{% else %}{\"operating_mode\": \"{{ values[value] if value in values.keys() else 'pause' }}\"}{% endif %}",
             mode_state_topic: "zigbee2mqtt/bosch_rm230z",
-            modes: ["off", "heat", "cool", "auto"],
+            modes: ["off", "heat", "auto"],
             name: null,
             object_id: "bosch_rm230z",
             origin,
@@ -1326,6 +1521,37 @@ describe("Extension: HomeAssistant", () => {
             qos: 1,
             retain: true,
         });
+    });
+
+    it("Should discover climate with cooling-only setpoint", () => {
+        const climateExpose = new zhc.Climate()
+            .withSetpoint("occupied_cooling_setpoint", 16, 32, 0.5)
+            .withLocalTemperature()
+            .withSystemMode(["off", "cool", "auto"]);
+        const device = {
+            definition: {},
+            isDevice: (): boolean => true,
+            isGroup: (): boolean => false,
+            endpoint: () => undefined,
+            options: {},
+            exposes: (): zhc.Expose[] => [climateExpose],
+            zh: {endpoints: []},
+        } as Device;
+
+        // @ts-expect-error private
+        const configs = extension.getConfigs(device);
+        const climate = configs.find((c) => c.type === "climate");
+        expect(climate).toBeDefined();
+        expect(climate!.discovery_payload).toMatchObject({
+            temperature_command_topic: "occupied_cooling_setpoint",
+            temperature_state_template: '{{ value_json["occupied_cooling_setpoint"] }}',
+            temperature_state_topic: true,
+            min_temp: "16",
+            max_temp: "32",
+            temp_step: 0.5,
+        });
+        expect(climate!.discovery_payload).not.toHaveProperty("temperature_low_command_topic");
+        expect(climate!.discovery_payload).not.toHaveProperty("temperature_high_command_topic");
     });
 
     it("Should discover devices with cover_position", () => {
@@ -1722,6 +1948,7 @@ describe("Extension: HomeAssistant", () => {
         await flushPromises();
         await vi.runOnlyPendingTimersAsync();
         await flushPromises();
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/state", stringify({state: "online"}), {retain: true, qos: 1});
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bulb",
             stringify({
@@ -1762,6 +1989,7 @@ describe("Extension: HomeAssistant", () => {
         await flushPromises();
         await vi.runOnlyPendingTimersAsync();
         await flushPromises();
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/state", stringify({state: "online"}), {retain: true, qos: 1});
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bulb",
             stringify({
@@ -3021,11 +3249,15 @@ describe("Extension: HomeAssistant", () => {
         settings.set(["homeassistant", "legacy_action_sensor"], true);
         await resetExtension();
 
-        // Should discovery action sensor
-        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("homeassistant/sensor/0x0017880104e45520/action/config", expect.any(String), {
-            retain: true,
-            qos: 1,
+        // Should discover action sensor as a diagnostic helper instead of a primary entity.
+        const actionDiscovery = mockMQTTPublishAsync.mock.calls.find(([topic]) => topic === "homeassistant/sensor/0x0017880104e45520/action/config");
+        assert(actionDiscovery);
+        expect(JSON.parse(actionDiscovery[1])).toMatchObject({
+            entity_category: "diagnostic",
+            name: "Action",
+            object_id: "button_action",
         });
+        expect(actionDiscovery[2]).toStrictEqual({retain: true, qos: 1});
 
         // Should counter an action payload with an empty payload
         mockMQTTPublishAsync.mockClear();
