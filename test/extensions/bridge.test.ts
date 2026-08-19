@@ -2,7 +2,7 @@
 import {afterAll, beforeAll, beforeEach, describe, expect, it, vi} from "vitest";
 import {Zdo} from "zigbee-herdsman";
 import * as data from "../mocks/data";
-import {mockJSZipFile, mockJSZipGenerateAsync} from "../mocks/jszip";
+import {mockFflateZip, mockFflateZipFailOnce} from "../mocks/fflate";
 import {mockLogger} from "../mocks/logger";
 import {events as mockMQTTEvents, mockMQTTPublishAsync} from "../mocks/mqtt";
 import {flushPromises} from "../mocks/utils";
@@ -12,7 +12,7 @@ import assert from "node:assert";
 import fs from "node:fs";
 import {platform} from "node:os";
 import path from "node:path";
-import stringify from "json-stable-stringify-without-jsonify";
+import {stringify} from "../../lib/util/stringify";
 import type {Mock} from "vitest";
 import {Controller} from "../../lib/controller";
 import Bridge from "../../lib/extension/bridge";
@@ -2806,7 +2806,7 @@ describe("Extension: Bridge", () => {
         mockMQTTPublishAsync.mockClear();
         await mockZHEvents.deviceLeave({ieeeAddr: devices.bulb.ieeeAddr});
         await flushPromises();
-        expect(mockMQTTPublishAsync).toHaveBeenCalledTimes(3);
+        expect(mockMQTTPublishAsync).toHaveBeenCalledTimes(4);
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/event",
             stringify({type: "device_leave", data: {ieee_address: "0x000b57fffec6a5b2", friendly_name: "bulb"}}),
@@ -2819,6 +2819,7 @@ describe("Extension: Bridge", () => {
             expect.any(String),
             {retain: true},
         );
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/groups", expect.any(String), {retain: true});
     });
 
     it("Should allow permit join on all", async () => {
@@ -2973,6 +2974,7 @@ describe("Extension: Bridge", () => {
 
     it("Should allow to remove device by string", async () => {
         const device = devices.bulb;
+        const removeSpy = vi.spyOn(controller.zigbee, "removeDeviceFromLookup");
         mockMQTTPublishAsync.mockClear();
         mockMQTTEvents.message("zigbee2mqtt/bridge/request/device/remove", "bulb");
         await flushPromises();
@@ -2981,11 +2983,12 @@ describe("Extension: Bridge", () => {
         expect(device.removeFromNetwork).toHaveBeenCalledTimes(1);
         expect(device.removeFromDatabase).not.toHaveBeenCalled();
         expect(settings.getDevice("bulb")).toBeUndefined();
+        expect(removeSpy).not.toHaveBeenCalled();
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bulb", "", {retain: true});
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), expect.any(Object));
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/remove",
-            stringify({data: {id: "bulb", block: false, force: false}, status: "ok"}),
+            stringify({data: {id: "bulb", block: false, force: false, clear_cache: false}, status: "ok"}),
             {},
         );
         expect(settings.get().blocklist).toStrictEqual([]);
@@ -2995,50 +2998,74 @@ describe("Extension: Bridge", () => {
 
     it("Should allow to remove device by object ID", async () => {
         const device = devices.bulb;
+        const removeSpy = vi.spyOn(controller.zigbee, "removeDeviceFromLookup");
         mockMQTTPublishAsync.mockClear();
         mockMQTTEvents.message("zigbee2mqtt/bridge/request/device/remove", stringify({id: "bulb"}));
         await flushPromises();
         expect(device.removeFromNetwork).toHaveBeenCalledTimes(1);
         expect(device.removeFromDatabase).not.toHaveBeenCalled();
         expect(settings.getDevice("bulb")).toBeUndefined();
+        expect(removeSpy).not.toHaveBeenCalled();
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), expect.any(Object));
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/remove",
-            stringify({data: {id: "bulb", block: false, force: false}, status: "ok"}),
+            stringify({data: {id: "bulb", block: false, force: false, clear_cache: false}, status: "ok"}),
             {},
         );
     });
 
     it("Should allow to force remove device", async () => {
         const device = devices.bulb;
+        const removeSpy = vi.spyOn(controller.zigbee, "removeDeviceFromLookup");
         mockMQTTPublishAsync.mockClear();
         mockMQTTEvents.message("zigbee2mqtt/bridge/request/device/remove", stringify({id: "bulb", force: true}));
         await flushPromises();
         expect(device.removeFromDatabase).toHaveBeenCalledTimes(1);
         expect(device.removeFromNetwork).not.toHaveBeenCalled();
         expect(settings.getDevice("bulb")).toBeUndefined();
+        expect(removeSpy).not.toHaveBeenCalled();
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), expect.any(Object));
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/remove",
-            stringify({data: {id: "bulb", block: false, force: true}, status: "ok"}),
+            stringify({data: {id: "bulb", block: false, force: true, clear_cache: false}, status: "ok"}),
             {},
         );
     });
 
     it("Should allow to block device", async () => {
         const device = devices.bulb;
+        const removeSpy = vi.spyOn(controller.zigbee, "removeDeviceFromLookup");
         mockMQTTPublishAsync.mockClear();
         mockMQTTEvents.message("zigbee2mqtt/bridge/request/device/remove", stringify({id: "bulb", block: true, force: true}));
         await flushPromises();
         expect(device.removeFromDatabase).toHaveBeenCalledTimes(1);
         expect(settings.getDevice("bulb")).toBeUndefined();
+        expect(removeSpy).not.toHaveBeenCalled();
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), expect.any(Object));
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/remove",
-            stringify({data: {id: "bulb", block: true, force: true}, status: "ok"}),
+            stringify({data: {id: "bulb", block: true, force: true, clear_cache: false}, status: "ok"}),
             {},
         );
         expect(settings.get().blocklist).toStrictEqual(["0x000b57fffec6a5b2"]);
+    });
+
+    it("Should allow to clear cache when removing device", async () => {
+        const device = devices.bulb;
+        const removeSpy = vi.spyOn(controller.zigbee, "removeDeviceFromLookup");
+        mockMQTTPublishAsync.mockClear();
+        mockMQTTEvents.message("zigbee2mqtt/bridge/request/device/remove", stringify({id: "bulb", clear_cache: true}));
+        await flushPromises();
+        expect(device.removeFromNetwork).toHaveBeenCalledTimes(1);
+        expect(device.removeFromDatabase).not.toHaveBeenCalled();
+        expect(settings.getDevice("bulb")).toBeUndefined();
+        expect(removeSpy).toHaveNthReturnedWith(1, true);
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), expect.any(Object));
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
+            "zigbee2mqtt/bridge/response/device/remove",
+            stringify({data: {id: "bulb", block: false, force: false, clear_cache: true}, status: "ok"}),
+            {},
+        );
     });
 
     it("Should allow to remove group", async () => {
@@ -3105,7 +3132,11 @@ describe("Extension: Bridge", () => {
         await flushPromises();
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/remove",
-            stringify({data: {}, status: "error", error: "Failed to remove device 'bulb' (block: false, force: false) (Error: device timeout)"}),
+            stringify({
+                data: {},
+                status: "error",
+                error: "Failed to remove device 'bulb' (block: false, force: false, clear cache: false) (Error: device timeout)",
+            }),
             {},
         );
     });
@@ -4162,16 +4193,39 @@ describe("Extension: Bridge", () => {
         mockMQTTEvents.message("zigbee2mqtt/bridge/request/backup", "");
         await flushPromises();
         expect(mockZHController.backup).toHaveBeenCalledTimes(1);
-        expect(mockJSZipFile).toHaveBeenCalledTimes(4);
-        expect(mockJSZipFile).toHaveBeenNthCalledWith(1, "configuration.yaml", expect.any(Object));
-        expect(mockJSZipFile).toHaveBeenNthCalledWith(2, path.join("ext_converters", "123", "myfile.js"), expect.any(Object));
-        expect(mockJSZipFile).toHaveBeenNthCalledWith(3, path.join("ext_converters", "afile.js"), expect.any(Object));
-        expect(mockJSZipFile).toHaveBeenNthCalledWith(4, "state.json", expect.any(Object));
-        expect(mockJSZipGenerateAsync).toHaveBeenCalledTimes(1);
-        expect(mockJSZipGenerateAsync).toHaveBeenNthCalledWith(1, {type: "base64"});
+        expect(mockFflateZip).toHaveBeenCalledTimes(1);
+        expect(mockFflateZip).toHaveBeenNthCalledWith(
+            1,
+            {
+                "configuration.yaml": expect.any(Buffer),
+                [path.join("ext_converters", "123", "myfile.js")]: expect.any(Buffer),
+                [path.join("ext_converters", "afile.js")]: expect.any(Buffer),
+                "state.json": expect.any(Buffer),
+            },
+            {level: 6},
+            expect.any(Function),
+        );
+        expect(Object.keys(mockFflateZip.mock.calls[0][0])).toStrictEqual([
+            "configuration.yaml",
+            path.join("ext_converters", "123", "myfile.js"),
+            path.join("ext_converters", "afile.js"),
+            "state.json",
+        ]);
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/backup",
             stringify({data: {zip: "THISISBASE64"}, status: "ok"}),
+            {},
+        );
+    });
+
+    it("Should return an error when the backup archive cannot be created", async () => {
+        mockMQTTPublishAsync.mockClear();
+        mockFflateZipFailOnce(new Error("invalid zip data"));
+        mockMQTTEvents.message("zigbee2mqtt/bridge/request/backup", "");
+        await flushPromises();
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
+            "zigbee2mqtt/bridge/response/backup",
+            stringify({data: {}, status: "error", error: "invalid zip data"}),
             {},
         );
     });
@@ -4323,6 +4377,58 @@ describe("Extension: Bridge", () => {
             stringify({data: {}, error: "advanced/log_level must be string", status: "error"}),
             {},
         );
+    });
+
+    it("Change options consecutively, check restart required", async () => {
+        settings.apply({health: {interval: 10, reset_on_check: false}});
+        mockMQTTPublishAsync.mockClear();
+
+        // Change option that doesn't require restart
+        mockMQTTEvents.message("zigbee2mqtt/bridge/request/options", stringify({options: {health: {reset_on_check: true}}}));
+        await flushPromises();
+
+        expect(settings.get().health.reset_on_check).toBe(true);
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
+            "zigbee2mqtt/bridge/response/options",
+            stringify({data: {restart_required: false}, status: "ok"}),
+            {},
+        );
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/info", expect.stringContaining('"restart_required":false'), {
+            retain: true,
+        });
+        mockMQTTPublishAsync.mockClear();
+
+        // Change option that requires restart
+        mockMQTTEvents.message("zigbee2mqtt/bridge/request/options", stringify({options: {health: {interval: 11}}}));
+        await flushPromises();
+
+        expect(settings.get().health.interval).toBe(11);
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
+            "zigbee2mqtt/bridge/response/options",
+            stringify({data: {restart_required: true}, status: "ok"}),
+            {},
+        );
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/info", expect.stringContaining('"restart_required":true'), {
+            retain: true,
+        });
+        mockMQTTPublishAsync.mockClear();
+
+        // Change option that doesn't require restart
+        mockMQTTEvents.message("zigbee2mqtt/bridge/request/options", stringify({options: {health: {reset_on_check: false}}}));
+        await flushPromises();
+
+        expect(settings.get().health.reset_on_check).toBe(false);
+
+        // System still requires restart
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
+            "zigbee2mqtt/bridge/response/options",
+            stringify({data: {restart_required: true}, status: "ok"}),
+            {},
+        );
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/info", expect.stringContaining('"restart_required":true'), {
+            retain: true,
+        });
+        mockMQTTPublishAsync.mockClear();
     });
 
     it("Icon link handling", () => {

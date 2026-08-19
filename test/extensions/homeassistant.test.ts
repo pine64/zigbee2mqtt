@@ -9,7 +9,7 @@ import type {Device as ZhDevice} from "../mocks/zigbeeHerdsman";
 import {devices, groups, events as mockZHEvents} from "../mocks/zigbeeHerdsman";
 
 import assert from "node:assert";
-import stringify from "json-stable-stringify-without-jsonify";
+import {stringify} from "../../lib/util/stringify";
 import type {MockInstance} from "vitest";
 import * as zhc from "zigbee-herdsman-converters";
 import type {KeyValueAny} from "zigbee-herdsman-converters/lib/types";
@@ -1699,6 +1699,62 @@ describe("Extension: HomeAssistant", () => {
         });
     });
 
+    it("Should discover an infrared emitter entity", () => {
+        const infraredEmitterExpose = new zhc.Text("emitter", zhc.access.SET).withHomeAssistant({
+            type: "infrared",
+            schema: "emitter",
+            valueTemplate: null,
+        });
+        const device = {
+            definition: {},
+            isDevice: (): boolean => true,
+            isGroup: (): boolean => false,
+            endpoint: () => undefined,
+            options: {},
+            exposes: (): zhc.Expose[] => [infraredEmitterExpose],
+            zh: {endpoints: []},
+        } as Device;
+
+        // @ts-expect-error private
+        const configs = extension.getConfigs(device);
+        const infrared = configs.find((c) => c.type === "infrared");
+        expect(infrared).toBeDefined();
+        expect(infrared!.discovery_payload).toMatchObject({
+            name: "Emitter",
+            schema: "emitter",
+            command_topic: true,
+            state_topic: 0,
+        });
+        expect(infrared!.discovery_payload).not.toHaveProperty("value_template");
+    });
+
+    it("Should discover an infrared receiver entity", () => {
+        const infraredReceiverExpose = new zhc.Text("receiver", zhc.access.STATE).withHomeAssistant({
+            type: "infrared",
+            schema: "receiver",
+            valueTemplate: "{{ json_value.emitter }}",
+        });
+        const device = {
+            definition: {},
+            isDevice: (): boolean => true,
+            isGroup: (): boolean => false,
+            endpoint: () => undefined,
+            options: {},
+            exposes: (): zhc.Expose[] => [infraredReceiverExpose],
+            zh: {endpoints: []},
+        } as Device;
+
+        // @ts-expect-error private
+        const configs = extension.getConfigs(device);
+        const infrared = configs.find((c) => c.type === "infrared");
+        expect(infrared).toBeDefined();
+        expect(infrared!.discovery_payload).toMatchObject({
+            name: "Receiver",
+            schema: "receiver",
+        });
+        expect(infrared!.discovery_payload).toHaveProperty("value_template");
+    });
+
     it("Should discover devices with custom homeassistant.discovery_topic", async () => {
         settings.set(["homeassistant", "discovery_topic"], "my_custom_discovery_topic");
         await resetExtension();
@@ -1739,7 +1795,7 @@ describe("Extension: HomeAssistant", () => {
 
         await expect(async () => {
             await controller.start();
-        }).rejects.toThrow("Home Assistant integration is not possible with attribute output!");
+        }).rejects.toThrow("Home Assistant integration requires 'output: json' under 'advanced'");
     });
 
     it("Should throw error when homeassistant.discovery_topic equals the mqtt.base_topic", async () => {
@@ -1755,7 +1811,9 @@ describe("Extension: HomeAssistant", () => {
         settings.set(["advanced", "cache_state"], false);
         mockLogger.warning.mockClear();
         await resetExtension();
-        expect(mockLogger.warning).toHaveBeenCalledWith("In order for Home Assistant integration to work properly set `cache_state: true");
+        expect(mockLogger.warning).toHaveBeenCalledWith(
+            "In order for Home Assistant integration to work properly, set `cache_state: true` under `advanced`",
+        );
     });
 
     it("Should set missing values to null", async () => {

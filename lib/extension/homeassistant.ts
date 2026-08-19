@@ -1,10 +1,10 @@
 import assert from "node:assert";
 import bind from "bind-decorator";
-import stringify from "json-stable-stringify-without-jsonify";
 import type * as zhc from "zigbee-herdsman-converters";
 import type {Zh} from "zigbee-herdsman-converters/lib/types";
 import logger from "../util/logger";
 import * as settings from "../util/settings";
+import {stringify} from "../util/stringify";
 import utils, {assertBinaryExpose, assertEnumExpose, assertNumericExpose, isBinaryExpose, isEnumExpose, isNumericExpose} from "../util/utils";
 import Extension from "./extension";
 
@@ -372,26 +372,41 @@ const featurePropertyWithoutEndpoint = (feature: zhc.Feature): string => {
     return feature.property;
 };
 
-const applyHomeAssistantExposeMetadata = (payload: KeyValue, homeAssistant: zhc.Expose["homeassistant"]): void => {
-    const metadata = homeAssistant as KeyValue | undefined;
-    if (!metadata) {
+const applyHomeAssistantExposeMetadata = (payload: DiscoveryEntry, homeAssistant: zhc.Expose["homeassistant"]): void => {
+    if (!homeAssistant) {
         return;
     }
 
-    if (typeof metadata.entityCategory === "string") {
-        payload.entity_category = metadata.entityCategory;
+    if (homeAssistant.type !== undefined) {
+        payload.type = homeAssistant.type;
     }
 
-    if (typeof metadata.deviceClass === "string") {
-        payload.device_class = metadata.deviceClass;
+    if (homeAssistant.schema !== undefined) {
+        payload.discovery_payload.schema = homeAssistant.schema;
     }
 
-    if (typeof metadata.enabledByDefault === "boolean") {
-        payload.enabled_by_default = metadata.enabledByDefault;
+    if (homeAssistant.entityCategory !== undefined) {
+        payload.discovery_payload.entity_category = homeAssistant.entityCategory;
     }
 
-    if (typeof metadata.icon === "string") {
-        payload.icon = metadata.icon;
+    if (homeAssistant.deviceClass !== undefined) {
+        payload.discovery_payload.device_class = homeAssistant.deviceClass;
+    }
+
+    if (homeAssistant.enabledByDefault !== undefined) {
+        payload.discovery_payload.enabled_by_default = homeAssistant.enabledByDefault;
+    }
+
+    if (homeAssistant.icon !== undefined) {
+        payload.discovery_payload.icon = homeAssistant.icon;
+    }
+
+    if (homeAssistant.valueTemplate !== undefined) {
+        if (homeAssistant.valueTemplate === null) {
+            delete payload.discovery_payload.value_template;
+        } else {
+            payload.discovery_payload.value_template = homeAssistant.valueTemplate;
+        }
     }
 };
 
@@ -482,9 +497,13 @@ export class HomeAssistant extends Extension {
     ) {
         super(zigbee, mqtt, state, publishEntityState, eventBus, enableDisableExtension, restartCallback, addExtension);
         if (settings.get().advanced.output === "attribute") {
-            throw new Error("Home Assistant integration is not possible with attribute output!");
+            throw new Error("Home Assistant integration requires 'output: json' under 'advanced'");
         }
 
+        // TODO (Z2M 3.0.0): Prevent starting without cache_state, instead of warning
+        // if (!settings.get().advanced.cache_state) {
+        //     throw new Error("Home Assistant integration is not possible without caching states! Set `cache_state: true` under `advanced`");
+        // }
         const haSettings = settings.get().homeassistant;
         assert(haSettings.enabled, `Home Assistant extension created with setting 'enabled: false'`);
         this.discoveryTopic = haSettings.discovery_topic;
@@ -500,8 +519,9 @@ export class HomeAssistant extends Extension {
     }
 
     override async start(): Promise<void> {
+        // TODO (Z2M 3.0.0): Prevent starting without cache_state, instead of warning
         if (!settings.get().advanced.cache_state) {
-            logger.warning("In order for Home Assistant integration to work properly set `cache_state: true");
+            logger.warning("In order for Home Assistant integration to work properly, set `cache_state: true` under `advanced`");
         }
 
         this.zigbee2MQTTVersion = (await utils.getZigbee2MQTTVersion(false)).version;
@@ -1407,7 +1427,7 @@ export class HomeAssistant extends Extension {
         }
 
         for (const entry of discoveryEntries) {
-            applyHomeAssistantExposeMetadata(entry.discovery_payload, firstExpose.homeassistant);
+            applyHomeAssistantExposeMetadata(entry, firstExpose.homeassistant);
 
             // If a sensor has entity category `config`, then change
             // it to `diagnostic`. Sensors have no input, so can't be configured.
@@ -1478,7 +1498,7 @@ export class HomeAssistant extends Extension {
 
                 if (match) {
                     const endpoint = match[1];
-                    const endpointRegExp = new RegExp(`(.*)_${endpoint}`);
+                    const endpointRegExp = new RegExp(`(.*)_${endpoint}$`);
                     const payload: KeyValue = {};
                     for (const key of Object.keys(data.message)) {
                         const keyMatch = endpointRegExp.exec(key);
@@ -1507,10 +1527,12 @@ export class HomeAssistant extends Extension {
          * Whenever a device publish an {action: *} we discover an MQTT device trigger sensor
          * and republish it to zigbee2mqtt/my_device/action
          */
-        if (settings.get().advanced.output === "json" && entity.isDevice() && entity.definition && data.message.action) {
+        if (entity.isDevice() && entity.definition && data.message.action) {
             const value = data.message.action.toString();
             await this.publishDeviceTriggerDiscover(entity, "action", value);
-            await this.mqtt.publish(`${data.entity.name}/action`, value, {});
+            if (settings.get().advanced.output === "json") {
+                await this.mqtt.publish(`${data.entity.name}/action`, value, {});
+            }
         }
     }
 
