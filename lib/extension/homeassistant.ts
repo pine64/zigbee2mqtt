@@ -157,6 +157,18 @@ const NUMERIC_DISCOVERY_LOOKUP: {[s: string]: KeyValue} = {
     boost_heating_countdown_time_set: {entity_category: "config", icon: "mdi:timer"},
     boost_time: {entity_category: "config", icon: "mdi:timer"},
     calibration: {entity_category: "config", icon: "mdi:wrench-clock"},
+    calibration_button_hold_time: {
+        enabled_by_default: false,
+        entity_category: "config",
+        icon: "mdi:wrench-clock",
+    },
+    calibration_closing_time: {entity_category: "config", icon: "mdi:wrench-clock"},
+    calibration_motor_start_delay: {
+        enabled_by_default: false,
+        entity_category: "config",
+        icon: "mdi:wrench-clock",
+    },
+    calibration_opening_time: {entity_category: "config", icon: "mdi:wrench-clock"},
     calibration_time: {entity_category: "config", icon: "mdi:wrench-clock"},
     calibration_time_left: {entity_category: "config", icon: "mdi:wrench-clock"},
     calibration_time_right: {entity_category: "config", icon: "mdi:wrench-clock"},
@@ -188,12 +200,18 @@ const NUMERIC_DISCOVERY_LOOKUP: {[s: string]: KeyValue} = {
     duration: {entity_category: "config", icon: "mdi:timer"},
     eco2: {device_class: "volatile_organic_compounds_parts", state_class: "measurement"},
     eco_temperature: {entity_category: "config", icon: "mdi:thermometer"},
+    effect_speed: {
+        enabled_by_default: false,
+        entity_category: "config",
+        icon: "mdi:motion-outline",
+    },
     energy: {device_class: "energy", state_class: "total_increasing"},
     external_temperature_input: {device_class: "temperature", icon: "mdi:thermometer"},
     external_temperature: {device_class: "temperature", icon: "mdi:thermometer", state_class: "measurement"},
     external_humidity: {device_class: "humidity", icon: "mdi:water-percent", state_class: "measurement"},
     fading_time: {entity_category: "config", icon: "mdi:timer"},
     formaldehyd: {state_class: "measurement"},
+    formaldehyde: {state_class: "measurement"},
     flow: {device_class: "volume_flow_rate", state_class: "measurement"},
     gas: {device_class: "gas", state_class: "total_increasing", icon: "mdi:meter-gas"},
     gas_density: {icon: "mdi:google-circles-communities", state_class: "measurement"},
@@ -323,7 +341,7 @@ const ENUM_DISCOVERY_LOOKUP: {[s: string]: KeyValue} = {
     effect: {enabled_by_default: false, icon: "mdi:palette"},
     force: {entity_category: "config", icon: "mdi:valve"},
     keep_time: {entity_category: "config", icon: "mdi:av-timer"},
-    identify: {device_class: "identify"},
+    identify: {entity_category: "diagnostic", device_class: "identify"},
     keypad_lockout: {entity_category: "config", icon: "mdi:lock"},
     load_detection_mode: {entity_category: "config", icon: "mdi:tune"},
     load_dimmable: {entity_category: "config", icon: "mdi:chart-bell-curve"},
@@ -333,6 +351,7 @@ const ENUM_DISCOVERY_LOOKUP: {[s: string]: KeyValue} = {
     mode: {entity_category: "config", icon: "mdi:tune"},
     mode_switch: {icon: "mdi:tune"},
     motor_direction: {entity_category: "config", icon: "mdi:arrow-left-right"},
+    motor_state: {entity_category: "diagnostic", icon: "mdi:state-machine"},
     motion_sensitivity: {entity_category: "config", icon: "mdi:tune"},
     operation_mode: {entity_category: "config", icon: "mdi:tune"},
     power_on_behavior: {entity_category: "config", icon: "mdi:power-settings"},
@@ -359,6 +378,11 @@ const ENUM_DISCOVERY_LOOKUP: {[s: string]: KeyValue} = {
 const LIST_DISCOVERY_LOOKUP: {[s: string]: KeyValue} = {
     action: {icon: "mdi:gesture-double-tap"},
     color_options: {icon: "mdi:palette"},
+    effect_color: {
+        enabled_by_default: false,
+        entity_category: "config",
+        icon: "mdi:palette-swatch",
+    },
     level_config: {entity_category: "diagnostic"},
     programming_mode: {icon: "mdi:calendar-clock"},
     schedule_settings: {entity_category: "config", icon: "mdi:calendar-clock"},
@@ -399,6 +423,10 @@ const applyHomeAssistantExposeMetadata = (payload: DiscoveryEntry, homeAssistant
 
     if (homeAssistant.icon !== undefined) {
         payload.discovery_payload.icon = homeAssistant.icon;
+    }
+
+    if (homeAssistant.name !== undefined) {
+        payload.discovery_payload.name = homeAssistant.name;
     }
 
     if (homeAssistant.valueTemplate !== undefined) {
@@ -934,7 +962,7 @@ export class HomeAssistant extends Extension {
                     ?.features.find((f) => f.name === "tilt");
                 const motorState = allExposes
                     ?.filter(isEnumExpose)
-                    .find((e) => ["motor_state", "moving"].includes(e.name) && e.access === ACCESS_STATE);
+                    .find((e) => ["motor_state", "moving"].includes(e.name) && e.access & ACCESS_STATE);
                 const running = allExposes?.filter(isBinaryExpose)?.find((e) => e.name === "running");
 
                 const discoveryEntry: DiscoveryEntry = {
@@ -960,6 +988,10 @@ export class HomeAssistant extends Extension {
                 // If curtains have `motor_state` or `moving` property, lookup for possible
                 // state names to detect movement direction and use this in discovery.
                 if (motorState) {
+                    const motorStateProperty = featurePropertyWithoutEndpoint(motorState);
+                    const stateProperty = featurePropertyWithoutEndpoint(state);
+                    const positionProperty = position ? featurePropertyWithoutEndpoint(position) : undefined;
+
                     const openingState = motorState.values.find((s) => COVER_OPENING_LOOKUP.includes(s.toString().toLowerCase()));
                     const closingState = motorState.values.find((s) => COVER_CLOSING_LOOKUP.includes(s.toString().toLowerCase()));
                     const stoppedState = motorState.values.find((s) => COVER_STOPPED_LOOKUP.includes(s.toString().toLowerCase()));
@@ -967,8 +999,33 @@ export class HomeAssistant extends Extension {
                     if (openingState && closingState && stoppedState) {
                         discoveryEntry.discovery_payload.state_opening = openingState;
                         discoveryEntry.discovery_payload.state_closing = closingState;
+                        discoveryEntry.discovery_payload.state_open = "OPEN";
+                        discoveryEntry.discovery_payload.state_closed = "CLOSE";
                         discoveryEntry.discovery_payload.state_stopped = stoppedState;
-                        discoveryEntry.discovery_payload.value_template = `{% if "${featurePropertyWithoutEndpoint(motorState)}" in value_json and value_json["${featurePropertyWithoutEndpoint(motorState)}"] %} {{ value_json["${featurePropertyWithoutEndpoint(motorState)}"] }} {% else %} ${stoppedState} {% endif %}`;
+                        // A movement value can remain stale after the cover reaches an endpoint. Prefer a terminal position when `state` agrees.
+                        const terminalPositionTemplate = positionProperty
+                            ? `{% if "${positionProperty}" in value_json and value_json["${positionProperty}"] == 0 and "${stateProperty}" in value_json and value_json["${stateProperty}"] == "CLOSE" %}` +
+                              "CLOSE" +
+                              `{% elif "${positionProperty}" in value_json and value_json["${positionProperty}"] == 100 and "${stateProperty}" in value_json and value_json["${stateProperty}"] == "OPEN" %}` +
+                              "OPEN"
+                            : "";
+                        discoveryEntry.discovery_payload.value_template =
+                            terminalPositionTemplate +
+                            `${positionProperty ? "{% elif" : "{% if"} "${motorStateProperty}" in value_json and value_json["${motorStateProperty}"] == "${openingState}" %}` +
+                            `${openingState}` +
+                            `{% elif "${motorStateProperty}" in value_json and value_json["${motorStateProperty}"] == "${closingState}" %}` +
+                            `${closingState}` +
+                            (positionProperty
+                                ? `{% elif "${motorStateProperty}" in value_json and value_json["${motorStateProperty}"] == "${stoppedState}" and "${positionProperty}" in value_json %}` +
+                                  `{% if value_json["${positionProperty}"] == 0 %}CLOSE{% else %}OPEN{% endif %}`
+                                : "") +
+                            `{% elif "${stateProperty}" in value_json and value_json["${stateProperty}"] == "OPEN" %}` +
+                            "OPEN" +
+                            `{% elif "${stateProperty}" in value_json and value_json["${stateProperty}"] == "CLOSE" %}` +
+                            "CLOSE" +
+                            "{% else %}" +
+                            `${stoppedState}` +
+                            "{% endif %}";
                     }
                 }
 
@@ -1443,7 +1500,11 @@ export class HomeAssistant extends Extension {
 
             // Let Home Assistant generate entity name when device_class is present.
             // preserve_name allows device_class and explicit name to coexist (e.g. derived sensors).
-            if (entry.discovery_payload.device_class && !NUMERIC_DISCOVERY_LOOKUP[firstExpose.name]?.preserve_name) {
+            if (
+                entry.discovery_payload.device_class &&
+                entry.discovery_payload.name !== null &&
+                !NUMERIC_DISCOVERY_LOOKUP[firstExpose.name]?.preserve_name
+            ) {
                 delete entry.discovery_payload.name;
             }
 

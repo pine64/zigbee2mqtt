@@ -281,6 +281,25 @@ describe("Extension: HomeAssistant", () => {
         expect(configs.find((config) => config.object_id === "voltage")?.discovery_payload).not.toHaveProperty("type");
     });
 
+    it("Should set discovery name to null when expose specifies homeassistant name null", () => {
+        const createDevice = (exposes: zhc.Expose[]): Device =>
+            ({
+                definition: {},
+                isDevice: (): boolean => true,
+                isGroup: (): boolean => false,
+                endpoint: () => undefined,
+                options: {},
+                exposes: (): zhc.Expose[] => exposes,
+                zh: {endpoints: []},
+            }) as Device;
+
+        const contactExpose = new zhc.Binary("contact", zhc.access.STATE, false, true).withHomeAssistant({name: null});
+
+        // @ts-expect-error private
+        const configs = extension.getConfigs(createDevice([contactExpose]));
+        expect(configs.find((config) => config.object_id === "contact")?.discovery_payload.name).toBeNull();
+    });
+
     it("Should discover devices and groups", async () => {
         settings.set(["homeassistant", "experimental_event_entities"], true);
         settings.set(["groups", "9", "homeassistant"], {name: "HA Discovery Group", icon: "mdi:lightbulb-group"});
@@ -1650,12 +1669,15 @@ describe("Extension: HomeAssistant", () => {
             position_topic: "zigbee2mqtt/0xa4c138018cf95021/left",
             set_position_template: '{ "position_left": {{ position }} }',
             set_position_topic: "zigbee2mqtt/0xa4c138018cf95021/left/set",
+            state_closed: "CLOSE",
             state_closing: "DOWN",
+            state_open: "OPEN",
             state_opening: "UP",
             state_stopped: "STOP",
             state_topic: "zigbee2mqtt/0xa4c138018cf95021/left",
             unique_id: "0xa4c138018cf95021_cover_left_zigbee2mqtt",
-            value_template: '{% if "moving" in value_json and value_json["moving"] %} {{ value_json["moving"] }} {% else %} STOP {% endif %}',
+            value_template:
+                '{% if "position" in value_json and value_json["position"] == 0 and "state" in value_json and value_json["state"] == "CLOSE" %}CLOSE{% elif "position" in value_json and value_json["position"] == 100 and "state" in value_json and value_json["state"] == "OPEN" %}OPEN{% elif "moving" in value_json and value_json["moving"] == "UP" %}UP{% elif "moving" in value_json and value_json["moving"] == "DOWN" %}DOWN{% elif "moving" in value_json and value_json["moving"] == "STOP" and "position" in value_json %}{% if value_json["position"] == 0 %}CLOSE{% else %}OPEN{% endif %}{% elif "state" in value_json and value_json["state"] == "OPEN" %}OPEN{% elif "state" in value_json and value_json["state"] == "CLOSE" %}CLOSE{% else %}STOP{% endif %}',
         };
         const payload_right = {
             availability: [
@@ -1681,13 +1703,24 @@ describe("Extension: HomeAssistant", () => {
             position_topic: "zigbee2mqtt/0xa4c138018cf95021/right",
             set_position_template: '{ "position_right": {{ position }} }',
             set_position_topic: "zigbee2mqtt/0xa4c138018cf95021/right/set",
+            state_closed: "CLOSE",
             state_closing: "DOWN",
+            state_open: "OPEN",
             state_opening: "UP",
             state_stopped: "STOP",
             state_topic: "zigbee2mqtt/0xa4c138018cf95021/right",
             unique_id: "0xa4c138018cf95021_cover_right_zigbee2mqtt",
-            value_template: '{% if "moving" in value_json and value_json["moving"] %} {{ value_json["moving"] }} {% else %} STOP {% endif %}',
+            value_template:
+                '{% if "position" in value_json and value_json["position"] == 0 and "state" in value_json and value_json["state"] == "CLOSE" %}CLOSE{% elif "position" in value_json and value_json["position"] == 100 and "state" in value_json and value_json["state"] == "OPEN" %}OPEN{% elif "moving" in value_json and value_json["moving"] == "UP" %}UP{% elif "moving" in value_json and value_json["moving"] == "DOWN" %}DOWN{% elif "moving" in value_json and value_json["moving"] == "STOP" and "position" in value_json %}{% if value_json["position"] == 0 %}CLOSE{% else %}OPEN{% endif %}{% elif "state" in value_json and value_json["state"] == "OPEN" %}OPEN{% elif "state" in value_json and value_json["state"] == "CLOSE" %}CLOSE{% else %}STOP{% endif %}',
         };
+
+        const coverLeftCalls = mockMQTTPublishAsync.mock.calls.filter(
+            ([topic]) => topic === "homeassistant/cover/0xa4c138018cf95021/cover_left/config",
+        );
+
+        for (const [, actualPayload] of coverLeftCalls) {
+            console.log(JSON.parse(actualPayload));
+        }
 
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith("homeassistant/cover/0xa4c138018cf95021/cover_left/config", stringify(payload_left), {
             retain: true,
@@ -1696,6 +1729,62 @@ describe("Extension: HomeAssistant", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith("homeassistant/cover/0xa4c138018cf95021/cover_right/config", stringify(payload_right), {
             retain: true,
             qos: 1,
+        });
+    });
+
+    it("Should derive stopped cover state from position for motor_state covers", () => {
+        const coverExpose = new zhc.Cover().withPosition();
+        const motorStateExpose = new zhc.Enum("motor_state", zhc.access.STATE, ["opening", "closing", "stopped"]);
+        const device = {
+            definition: {},
+            isDevice: (): boolean => true,
+            isGroup: (): boolean => false,
+            endpoint: () => undefined,
+            options: {},
+            exposes: (): zhc.Expose[] => [coverExpose, motorStateExpose],
+            zh: {endpoints: []},
+        } as Device;
+
+        // @ts-expect-error private
+        const configs = extension.getConfigs(device);
+        const cover = configs.find((c) => c.type === "cover");
+        expect(cover).toBeDefined();
+        expect(cover!.discovery_payload).toMatchObject({
+            state_opening: "opening",
+            state_closing: "closing",
+            state_open: "OPEN",
+            state_closed: "CLOSE",
+            state_stopped: "stopped",
+            value_template:
+                '{% if "position" in value_json and value_json["position"] == 0 and "state" in value_json and value_json["state"] == "CLOSE" %}CLOSE{% elif "position" in value_json and value_json["position"] == 100 and "state" in value_json and value_json["state"] == "OPEN" %}OPEN{% elif "motor_state" in value_json and value_json["motor_state"] == "opening" %}opening{% elif "motor_state" in value_json and value_json["motor_state"] == "closing" %}closing{% elif "motor_state" in value_json and value_json["motor_state"] == "stopped" and "position" in value_json %}{% if value_json["position"] == 0 %}CLOSE{% else %}OPEN{% endif %}{% elif "state" in value_json and value_json["state"] == "OPEN" %}OPEN{% elif "state" in value_json and value_json["state"] == "CLOSE" %}CLOSE{% else %}stopped{% endif %}',
+        });
+    });
+
+    it("Should preserve motor_state and state fallback for covers without position", () => {
+        const coverExpose = new zhc.Cover();
+        const motorStateExpose = new zhc.Enum("motor_state", zhc.access.STATE, ["opening", "closing", "stopped"]);
+        const device = {
+            definition: {},
+            isDevice: (): boolean => true,
+            isGroup: (): boolean => false,
+            endpoint: () => undefined,
+            options: {},
+            exposes: (): zhc.Expose[] => [coverExpose, motorStateExpose],
+            zh: {endpoints: []},
+        } as Device;
+
+        // @ts-expect-error private
+        const configs = extension.getConfigs(device);
+        const cover = configs.find((c) => c.type === "cover");
+        expect(cover).toBeDefined();
+        expect(cover!.discovery_payload).toMatchObject({
+            state_opening: "opening",
+            state_closing: "closing",
+            state_open: "OPEN",
+            state_closed: "CLOSE",
+            state_stopped: "stopped",
+            value_template:
+                '{% if "motor_state" in value_json and value_json["motor_state"] == "opening" %}opening{% elif "motor_state" in value_json and value_json["motor_state"] == "closing" %}closing{% elif "state" in value_json and value_json["state"] == "OPEN" %}OPEN{% elif "state" in value_json and value_json["state"] == "CLOSE" %}CLOSE{% else %}stopped{% endif %}',
         });
     });
 
@@ -1855,6 +1944,7 @@ describe("Extension: HomeAssistant", () => {
                 effect: null,
                 effect_color: null,
                 effect_speed: null,
+                identify: null,
                 linkquality: null,
                 state: null,
                 power_on_behavior: null,
@@ -1880,6 +1970,7 @@ describe("Extension: HomeAssistant", () => {
                 effect: null,
                 effect_color: null,
                 effect_speed: null,
+                identify: null,
                 linkquality: null,
                 state: null,
                 power_on_behavior: null,
@@ -1904,6 +1995,7 @@ describe("Extension: HomeAssistant", () => {
                 effect: null,
                 effect_color: null,
                 effect_speed: null,
+                identify: null,
                 state: "ON",
                 power_on_behavior: null,
                 update: {state: null, installed_version: -1, latest_version: -1},
@@ -2375,7 +2467,7 @@ describe("Extension: HomeAssistant", () => {
 
     it("Should discover trigger when action is published", async () => {
         const discovered = mockMQTTPublishAsync.mock.calls.filter((c) => c[0].includes("0x0017880104e45520")).map((c) => c[0]);
-        expect(discovered.length).toBe(5);
+        expect(discovered.length).toBe(6);
 
         mockMQTTPublishAsync.mockClear();
 
@@ -2412,6 +2504,7 @@ describe("Extension: HomeAssistant", () => {
             stringify({
                 action: "single",
                 battery: null,
+                identify: null,
                 linkquality: null,
                 voltage: null,
                 power_outage_count: null,
@@ -3327,6 +3420,7 @@ describe("Extension: HomeAssistant", () => {
         expect(JSON.parse(mockMQTTPublishAsync.mock.calls[0][1])).toStrictEqual({
             action: "single",
             battery: null,
+            identify: null,
             linkquality: null,
             voltage: null,
             power_outage_count: null,
@@ -3337,6 +3431,7 @@ describe("Extension: HomeAssistant", () => {
         expect(JSON.parse(mockMQTTPublishAsync.mock.calls[1][1])).toStrictEqual({
             action: "",
             battery: null,
+            identify: null,
             linkquality: null,
             voltage: null,
             power_outage_count: null,

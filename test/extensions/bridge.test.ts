@@ -785,6 +785,16 @@ describe("Extension: Bridge", () => {
                                 type: "text",
                             },
                             {
+                                access: 2,
+                                category: "config",
+                                description: "Initiate device identification",
+                                label: "Identify",
+                                name: "identify",
+                                property: "identify",
+                                type: "enum",
+                                values: ["identify"],
+                            },
+                            {
                                 access: 1,
                                 category: "diagnostic",
                                 description: "Link quality (signal strength)",
@@ -830,6 +840,17 @@ describe("Extension: Bridge", () => {
                                 type: "numeric",
                                 value_min: 0,
                                 value_step: 0.1,
+                            },
+                            {
+                                access: 2,
+                                description:
+                                    "Sets the duration of the identification procedure in seconds (i.e., how long the device would flash).The value ranges from 1 to 30 seconds (default: 3).",
+                                label: "Identify timeout",
+                                name: "identify_timeout",
+                                property: "identify_timeout",
+                                type: "numeric",
+                                value_max: 30,
+                                value_min: 1,
                             },
                             {
                                 access: 2,
@@ -1163,6 +1184,17 @@ describe("Extension: Bridge", () => {
                                 type: "numeric",
                             },
                             {
+                                access: 2,
+                                category: "config",
+                                description:
+                                    "Initiate device identification. This device is asleep by default.You may need to wake it up first before sending the identify command.",
+                                label: "Identify",
+                                name: "identify",
+                                property: "identify",
+                                type: "enum",
+                                values: ["identify"],
+                            },
+                            {
                                 access: 1,
                                 category: "diagnostic",
                                 description: "Triggered action (e.g. a button click)",
@@ -1195,6 +1227,17 @@ describe("Extension: Bridge", () => {
                                 property: "device_temperature_calibration",
                                 type: "numeric",
                                 value_step: 0.1,
+                            },
+                            {
+                                access: 2,
+                                description:
+                                    "Sets the duration of the identification procedure in seconds (i.e., how long the device would flash).The value ranges from 1 to 30 seconds (default: 3).",
+                                label: "Identify timeout",
+                                name: "identify_timeout",
+                                property: "identify_timeout",
+                                type: "numeric",
+                                value_max: 30,
+                                value_min: 1,
                             },
                         ],
                         supports_ota: false,
@@ -1962,7 +2005,7 @@ describe("Extension: Bridge", () => {
                             },
                             {
                                 access: 2,
-                                description: "Inverts the cover position, false: open=100,close=0, true: open=0,close=100 (default false).",
+                                description: "Inverts the cover position and state, false: open=100,close=0, true: open=0,close=100 (default false).",
                                 label: "Invert cover",
                                 name: "invert_cover",
                                 property: "invert_cover",
@@ -2988,7 +3031,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), expect.any(Object));
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/remove",
-            stringify({data: {id: "bulb", block: false, force: false, clear_cache: false}, status: "ok"}),
+            stringify({data: {id: "bulb", block: false, force: false, keep_config: false, clear_cache: false}, status: "ok"}),
             {},
         );
         expect(settings.get().blocklist).toStrictEqual([]);
@@ -3009,7 +3052,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), expect.any(Object));
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/remove",
-            stringify({data: {id: "bulb", block: false, force: false, clear_cache: false}, status: "ok"}),
+            stringify({data: {id: "bulb", block: false, force: false, keep_config: false, clear_cache: false}, status: "ok"}),
             {},
         );
     });
@@ -3027,7 +3070,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), expect.any(Object));
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/remove",
-            stringify({data: {id: "bulb", block: false, force: true, clear_cache: false}, status: "ok"}),
+            stringify({data: {id: "bulb", block: false, force: true, keep_config: false, clear_cache: false}, status: "ok"}),
             {},
         );
     });
@@ -3044,10 +3087,28 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), expect.any(Object));
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/remove",
-            stringify({data: {id: "bulb", block: true, force: true, clear_cache: false}, status: "ok"}),
+            stringify({data: {id: "bulb", block: true, force: true, keep_config: false, clear_cache: false}, status: "ok"}),
             {},
         );
         expect(settings.get().blocklist).toStrictEqual(["0x000b57fffec6a5b2"]);
+    });
+
+    it("Should allow to keep configuration when removing device", async () => {
+        const device = devices.bulb;
+        const removeSpy = vi.spyOn(controller.zigbee, "removeDeviceFromLookup");
+        mockMQTTPublishAsync.mockClear();
+        mockMQTTEvents.message("zigbee2mqtt/bridge/request/device/remove", stringify({id: "bulb", keep_config: true}));
+        await flushPromises();
+        expect(device.removeFromDatabase).not.toHaveBeenCalled();
+        expect(device.removeFromNetwork).toHaveBeenCalledTimes(1);
+        expect(settings.getDevice("bulb")).toBeDefined();
+        expect(removeSpy).not.toHaveBeenCalled();
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), expect.any(Object));
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
+            "zigbee2mqtt/bridge/response/device/remove",
+            stringify({data: {id: "bulb", block: false, force: false, keep_config: true, clear_cache: false}, status: "ok"}),
+            {},
+        );
     });
 
     it("Should allow to clear cache when removing device", async () => {
@@ -3063,7 +3124,7 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith("zigbee2mqtt/bridge/devices", expect.any(String), expect.any(Object));
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/remove",
-            stringify({data: {id: "bulb", block: false, force: false, clear_cache: true}, status: "ok"}),
+            stringify({data: {id: "bulb", block: false, force: false, keep_config: false, clear_cache: true}, status: "ok"}),
             {},
         );
     });
@@ -3135,7 +3196,7 @@ describe("Extension: Bridge", () => {
             stringify({
                 data: {},
                 status: "error",
-                error: "Failed to remove device 'bulb' (block: false, force: false, clear cache: false) (Error: device timeout)",
+                error: "Failed to remove device 'bulb' (block: false, force: false, keep config: false, clear cache: false) (Error: device timeout)",
             }),
             {},
         );
@@ -3402,7 +3463,7 @@ describe("Extension: Bridge", () => {
                         "    model: 'lumi.plug',\n" +
                         "    vendor: '',\n" +
                         "    description: 'Automatically generated definition',\n" +
-                        '    extend: [m.onOff({"powerOnBehavior":false})],\n' +
+                        "    extend: [m.onOff()],\n" +
                         "};\n",
                 },
                 status: "ok",
@@ -3581,6 +3642,36 @@ describe("Extension: Bridge", () => {
         expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
             "zigbee2mqtt/bridge/response/device/options",
             stringify({data: {}, status: "error", error: "Invalid payload"}),
+            {},
+        );
+    });
+
+    it("Should warn on unsupported device option", async () => {
+        mockMQTTPublishAsync.mockClear();
+        mockLogger.warning.mockClear();
+
+        const device = controller.zigbee.resolveEntity(devices.bulb.ieeeAddr);
+        assert(device && "definition" in device);
+        const definitionOptions = device.definition?.options;
+        device.definition!.options = undefined;
+
+        mockMQTTEvents.message("zigbee2mqtt/bridge/request/device/options", stringify({options: {unsupported: true}, id: "bulb"}));
+        await flushPromises();
+        device.definition!.options = definitionOptions;
+
+        expect(settings.getDevice("bulb")).toHaveProperty("unsupported");
+        expect(mockLogger.warning).toHaveBeenCalledWith("Device 'bulb' does not support option 'unsupported'");
+        expect(mockMQTTPublishAsync).toHaveBeenCalledWith(
+            "zigbee2mqtt/bridge/response/device/options",
+            stringify({
+                data: {
+                    from: {retain: true, description: "this is my bulb"},
+                    to: {retain: true, description: "this is my bulb", unsupported: true},
+                    id: "bulb",
+                    restart_required: false,
+                },
+                status: "ok",
+            }),
             {},
         );
     });
