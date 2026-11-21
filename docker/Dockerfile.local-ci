@@ -14,7 +14,7 @@ FROM base AS deps
 # arm64 QEMU, which is slow and can fail with illegal instructions.
 COPY zigbee-herdsman /app/zigbee-herdsman
 
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
 # The package.json already has the correct path "file:../zigbee-herdsman"
 # But we need to adjust it for the Docker build context where zigbee-herdsman is in the same directory
